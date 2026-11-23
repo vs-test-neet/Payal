@@ -708,6 +708,9 @@ function markStoreUpdated(immediateDiskFlush = false): Promise<void> {
   return Promise.resolve();
 }
 
+let cachedBootstrapGzipBuffer: Buffer | null = null;
+let cachedBootstrapGzipVersion = -1;
+
 function getBootstrapBuffer(): Buffer {
   if (cachedBootstrapBuffer && cachedBootstrapVersion === memoryStore.version) {
     return cachedBootstrapBuffer;
@@ -729,7 +732,18 @@ function getBootstrapBuffer(): Buffer {
   };
   cachedBootstrapBuffer = Buffer.from(JSON.stringify(payload), 'utf-8');
   cachedBootstrapVersion = memoryStore.version;
+  cachedBootstrapGzipBuffer = null;
   return cachedBootstrapBuffer;
+}
+
+function getBootstrapGzipBuffer(): Buffer {
+  if (cachedBootstrapGzipBuffer && cachedBootstrapGzipVersion === memoryStore.version) {
+    return cachedBootstrapGzipBuffer;
+  }
+  const raw = getBootstrapBuffer();
+  cachedBootstrapGzipBuffer = zlib.gzipSync(raw, { level: 1 });
+  cachedBootstrapGzipVersion = memoryStore.version;
+  return cachedBootstrapGzipBuffer;
 }
 
 initializeMemoryStore();
@@ -824,9 +838,13 @@ async function startServer() {
       res.json({ unchanged: true, version: memoryStore.version });
       return;
     }
-    const buf = getBootstrapBuffer();
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.send(buf);
+    if (String(req.headers['accept-encoding'] || '').includes('gzip')) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.send(getBootstrapGzipBuffer());
+      return;
+    }
+    res.send(getBootstrapBuffer());
   });
 
   // 10,000 MB (10 GB) Storage Engine Telemetry Endpoint
@@ -4133,7 +4151,71 @@ Generate a highly actionable, bilingual (Hindi + English) NCERT-grounded Revisio
     res.status(404).json({ error: 'Static store asset not found' });
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(__dirname, 'dist');
+  const distIndexHtml = path.join(distPath, 'index.html');
+  const usePrebuiltDist =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.USE_VITE_DEV_SERVER !== '1' && fs.existsSync(distIndexHtml));
+
+  if (usePrebuiltDist && fs.existsSync(distIndexHtml)) {
+    const gzipAssetCache = new Map<string, { raw: Buffer; gz: Buffer; mime: string }>();
+    const getMimeForExt = (ext: string): string => {
+      if (ext === '.js' || ext === '.mjs') return 'application/javascript; charset=utf-8';
+      if (ext === '.css') return 'text/css; charset=utf-8';
+      if (ext === '.html') return 'text/html; charset=utf-8';
+      if (ext === '.json' || ext === '.webmanifest') return 'application/json; charset=utf-8';
+      if (ext === '.svg') return 'image/svg+xml';
+      return '';
+    };
+
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        next();
+        return;
+      }
+      const reqPath = req.path === '/' ? '/index.html' : req.path;
+      if (reqPath.includes('..') || reqPath.startsWith('/api/') || reqPath.startsWith('/static-store/')) {
+        next();
+        return;
+      }
+      const ext = path.extname(reqPath).toLowerCase();
+      const mime = getMimeForExt(ext);
+      if (!mime) {
+        next();
+        return;
+      }
+      const fullPath = path.join(distPath, reqPath);
+      let entry = gzipAssetCache.get(fullPath);
+      if (!entry && fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+        const raw = fs.readFileSync(fullPath);
+        const gz = zlib.gzipSync(raw, { level: 6 });
+        entry = { raw, gz, mime };
+        gzipAssetCache.set(fullPath, entry);
+      }
+      if (!entry) {
+        next();
+        return;
+      }
+      res.setHeader('Content-Type', entry.mime);
+      if (reqPath.startsWith('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+      if (String(req.headers['accept-encoding'] || '').includes('gzip')) {
+        res.setHeader('Content-Encoding', 'gzip');
+        res.send(entry.gz);
+        return;
+      }
+      res.send(entry.raw);
+    });
+
+    app.use(express.static(distPath));
+    app.use(express.static(path.join(__dirname, 'public')));
+    app.get('*', (_req, res) => {
+      res.sendFile(distIndexHtml);
+    });
+  } else {
     app.get('/@vite/client', (_req, res) => {
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
@@ -4193,12 +4275,6 @@ export class ErrorOverlay extends HTMLElement {}
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
   const httpServer = app.listen(PORT, '0.0.0.0', () => {
