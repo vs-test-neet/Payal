@@ -4125,13 +4125,6 @@ Generate a highly actionable, bilingual (Hindi + English) NCERT-grounded Revisio
     }
   );
 
-  const httpServer = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-  });
-  httpServer.timeout = 0;
-  httpServer.keepAliveTimeout = 120000;
-  httpServer.headersTimeout = 125000;
-
   const publicStaticStore = path.join(__dirname, 'public', 'static-store');
   const distStaticStore = path.join(__dirname, 'dist', 'static-store');
   app.use('/static-store', express.static(publicStaticStore, { fallthrough: true }));
@@ -4141,6 +4134,60 @@ Generate a highly actionable, bilingual (Hindi + English) NCERT-grounded Revisio
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    app.get('/@vite/client', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(`
+const sheetsMap = new Map();
+let lastInsertedStyle;
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    if (!lastInsertedStyle) {
+      document.head.appendChild(style);
+      setTimeout(() => { lastInsertedStyle = undefined; }, 0);
+    } else {
+      lastInsertedStyle.insertAdjacentElement('afterend', style);
+    }
+    lastInsertedStyle = style;
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  return {
+    accept() {},
+    dispose() {},
+    prune() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+    data: {}
+  };
+}
+export function injectQuery(url, queryToInject) {
+  if (!url || (url[0] !== '.' && url[0] !== '/')) return url;
+  const pathname = url.replace(/[?#].*$/, '');
+  const u = new URL(url, 'http://vite.dev');
+  return pathname + '?' + queryToInject + (u.search ? '&' + u.search.slice(1) : '') + u.hash;
+}
+export class ErrorOverlay extends HTMLElement {}
+`);
+    });
+
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true, hmr: false, ws: false, watch: null },
       appType: 'spa',
@@ -4153,6 +4200,13 @@ Generate a highly actionable, bilingual (Hindi + English) NCERT-grounded Revisio
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
+  httpServer.timeout = 0;
+  httpServer.keepAliveTimeout = 120000;
+  httpServer.headersTimeout = 125000;
 }
 
 startServer();
