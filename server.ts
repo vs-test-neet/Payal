@@ -1,11 +1,9 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 
@@ -15,8 +13,7 @@ const gunzipAsync = promisify(zlib.gunzip);
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = process.cwd();
 
 const DATA_DIR = path.join(__dirname, 'data');
 const TESTS_DIR = path.join(DATA_DIR, 'tests');
@@ -4151,7 +4148,11 @@ Generate a highly actionable, bilingual (Hindi + English) NCERT-grounded Revisio
     res.status(404).json({ error: 'Static store asset not found' });
   });
 
-  const distPath = path.join(__dirname, 'dist');
+  const primaryDistPath = path.join(__dirname, 'dist');
+  const fallbackAppBundlePath = path.join(__dirname, 'public', 'app-bundle');
+  const distPath = fs.existsSync(path.join(primaryDistPath, 'index.html'))
+    ? primaryDistPath
+    : fallbackAppBundlePath;
   const distIndexHtml = path.join(distPath, 'index.html');
   const usePrebuiltDist =
     process.env.NODE_ENV === 'production' ||
@@ -4270,6 +4271,7 @@ export class ErrorOverlay extends HTMLElement {}
 `);
     });
 
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true, hmr: false, ws: false, watch: null },
       appType: 'spa',
