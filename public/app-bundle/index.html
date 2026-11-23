@@ -27,8 +27,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/assets/index-Dj6EIgKf.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BtpbwQLj.css">
+    <script type="module" crossorigin src="/assets/index-C06pCrk-.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CSbZ9aoO.css">
   </head>
   <body>
     <script>
@@ -63,9 +63,20 @@
     <div id="root"></div>
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('/sw.js').catch(function () {});
-        });
+        if (window.location.hostname.indexOf('.e2b.app') !== -1) {
+          navigator.serviceWorker.getRegistrations().then(function (rs) {
+            rs.forEach(function (r) { r.unregister(); });
+          }).catch(function () {});
+          if ('caches' in window) {
+            caches.keys().then(function (ks) {
+              ks.forEach(function (k) { caches.delete(k); });
+            }).catch(function () {});
+          }
+        } else {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker.register('/sw.js').catch(function () {});
+          });
+        }
       }
     </script>
   </body>
