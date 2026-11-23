@@ -3,11 +3,13 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 
+const execFileAsync = promisify(execFile);
 const gzipAsync = promisify(zlib.gzip);
 const gunzipAsync = promisify(zlib.gunzip);
 
@@ -609,6 +611,7 @@ async function flushStoreToDiskNow(): Promise<void> {
           path.join(publicStaticDir, 'bootstrap.json'),
           getBootstrapBuffer()
         );
+        scheduleAutoGitPush();
       } catch (e) {
         console.error('Error flushing portal_store.json:', e);
       }
@@ -619,6 +622,68 @@ async function flushStoreToDiskNow(): Promise<void> {
     await activeFlushPromise;
   } finally {
     activeFlushPromise = null;
+  }
+}
+
+let autoGitPushTimer: ReturnType<typeof setTimeout> | null = null;
+let autoGitPushInFlight = false;
+let autoGitPushQueued = false;
+
+function scheduleAutoGitPush(): void {
+  if (autoGitPushTimer) {
+    clearTimeout(autoGitPushTimer);
+  }
+  autoGitPushTimer = setTimeout(() => {
+    autoGitPushTimer = null;
+    void runAutoGitPush();
+  }, 4000);
+}
+
+async function runAutoGitPush(): Promise<void> {
+  if (autoGitPushInFlight) {
+    autoGitPushQueued = true;
+    return;
+  }
+  autoGitPushInFlight = true;
+  try {
+    do {
+      autoGitPushQueued = false;
+      const { stdout: branchOut } = await execFileAsync(
+        'git',
+        ['rev-parse', '--abbrev-ref', 'HEAD'],
+        { cwd: __dirname }
+      );
+      const currentBranch = branchOut.trim();
+      if (!currentBranch || currentBranch === 'HEAD') break;
+
+      await execFileAsync(
+        'git',
+        ['add', 'data/', 'public/static-store/bootstrap.json'],
+        { cwd: __dirname }
+      );
+
+      let hasChanges = false;
+      try {
+        await execFileAsync('git', ['diff', '--cached', '--quiet'], { cwd: __dirname });
+      } catch {
+        hasChanges = true;
+      }
+      if (!hasChanges) continue;
+
+      await execFileAsync(
+        'git',
+        ['commit', '-m', 'chore(store): auto-sync portal store and tests to GitHub'],
+        { cwd: __dirname }
+      );
+      await execFileAsync('git', ['push', 'origin', currentBranch], {
+        cwd: __dirname,
+        timeout: 120000,
+      });
+    } while (autoGitPushQueued);
+  } catch (err) {
+    console.warn('Auto GitHub sync skipped/deferred:', err instanceof Error ? err.message : err);
+  } finally {
+    autoGitPushInFlight = false;
   }
 }
 
