@@ -1819,23 +1819,20 @@ export const CbtExamRunner: React.FC<CbtExamRunnerProps> = ({
   const [verifiedStreamUrl, setVerifiedStreamUrl] = useState<string>('');
 
   const triggerLocalHtmlFallback = useCallback(async () => {
-    setServerStreamFailed(true);
     try {
       const bundle = await loadTestBundleFromFirestore(testMeta.id);
       if (bundle.rawHtml && bundle.rawHtml.trim().length > 20) {
         setLocalFallbackHtml(bundle.rawHtml);
+        setServerStreamFailed(true);
         return;
       }
       if (bundle.questions && bundle.questions.length > 0) {
         setLocalFallbackHtml(buildStandaloneCbtHtmlFromQuestions(testMeta, bundle.questions));
+        setServerStreamFailed(true);
         return;
       }
     } catch {
       // ignore
-    }
-    if (questions && questions.length > 0) {
-      setLocalFallbackHtml(buildStandaloneCbtHtmlFromQuestions(testMeta, questions));
-      return;
     }
     const isPrayas06 =
       testMeta.id === 'prayas_06' ||
@@ -1850,6 +1847,7 @@ export const CbtExamRunner: React.FC<CbtExamRunnerProps> = ({
           const assetHtml = await assetRes.text();
           if (assetHtml && assetHtml.trim().length > 100) {
             setLocalFallbackHtml(assetHtml);
+            setServerStreamFailed(true);
             return;
           }
         }
@@ -1857,6 +1855,12 @@ export const CbtExamRunner: React.FC<CbtExamRunnerProps> = ({
         // ignore
       }
     }
+    if (questions && questions.length > 0) {
+      setLocalFallbackHtml(buildStandaloneCbtHtmlFromQuestions(testMeta, questions));
+      setServerStreamFailed(true);
+      return;
+    }
+    setServerStreamFailed(true);
     setExactHtmlMode(false);
   }, [testMeta, questions]);
 
@@ -1979,9 +1983,11 @@ export const CbtExamRunner: React.FC<CbtExamRunnerProps> = ({
     var origSetItem = Storage.prototype.setItem;
     var origRemoveItem = Storage.prototype.removeItem;
 
-    // Namespace generic & neet_cbt_ keys per testId so different tests never collide
+    // Namespace all test-internal localStorage keys per testId so different tests never collide
     var isIsolatedCbtKey = function(k) {
-      return Boolean(k && (GENERIC_CBT_KEYS[k] || k.indexOf('neet_cbt_') === 0 || k.indexOf('_v4_state') !== -1 || k.indexOf('cbt_state') !== -1));
+      if (!k || typeof k !== 'string') return false;
+      if (k.indexOf('vs_iso_') === 0 || k.indexOf('vs_neet_') === 0 || k.indexOf('vs_client_') === 0 || k.indexOf('firebase:') === 0 || k === 'neet_cbt_student_session' || k === 'neet_cbt_theme_mode') return false;
+      return true;
     };
     Storage.prototype.getItem = function(k) {
       try {
@@ -2401,7 +2407,7 @@ export const CbtExamRunner: React.FC<CbtExamRunnerProps> = ({
     }
     return `${baseHtml}${bridgeScript}`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exactHtmlMode, isSubmitted, serverHtmlPaperUrl, activeRawHtml, testMeta.id]);
+  }, [exactHtmlMode, isSubmitted, serverHtmlPaperUrl, activeRawHtml, testMeta.id, questions]);
 
   // Create a fast same-origin Blob URL for large HTML papers so 12.6MB strings never choke iframe srcDoc
   const htmlBlobUrl = useMemo(() => {

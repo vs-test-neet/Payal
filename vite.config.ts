@@ -22,7 +22,7 @@ export default defineConfig(() => {
       },
     },
     server: {
-      allowedHosts: true,
+      allowedHosts: true as const,
       hmr: false,
       ws: false as const,
       watch: null,

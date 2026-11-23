@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vs-test-app-v7';
+const CACHE_NAME = 'vs-test-app-v8';
 const PRECACHE_URLS = [
   '/',
   '/index.html',

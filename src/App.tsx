@@ -2479,9 +2479,31 @@ function AppContent() {
     }));
   };
 
+  const isQuestionListPlayable = (qs: CbtQuestion[] | undefined): boolean => {
+    if (!Array.isArray(qs) || qs.length === 0 || !qs[0]) return false;
+    const q0 = qs[0];
+    if (
+      q0.imageEn ||
+      q0.imageHi ||
+      q0.imageUrl ||
+      (Array.isArray(q0.imageUrls) && q0.imageUrls.length > 0)
+    ) {
+      return true;
+    }
+    const best = String(q0.questionEn || q0.questionHi || '').trim();
+    if (best.length < 22) return false;
+    if (/^(biology|physics|chemistry|botany|zoology|mathematics|science|neet(\s+syllabus)?)$/i.test(best)) {
+      return false;
+    }
+    if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(best)) {
+      return false;
+    }
+    return true;
+  };
+
   // Load questions for any test (uses <25KB fast endpoint with /qimg URLs first so mobile never downloads 10MB JSON)
   const loadQuestionsForTest = async (test: CbtTestMeta): Promise<CbtQuestion[]> => {
-    if (localQuestionsCache[test.id] && localQuestionsCache[test.id].length > 0) {
+    if (localQuestionsCache[test.id] && isQuestionListPlayable(localQuestionsCache[test.id])) {
       return localQuestionsCache[test.id].map((q, idx) => normalizeCbtQuestion(q, idx));
     }
     if (
@@ -2496,12 +2518,12 @@ function AppContent() {
     }
     try {
       const fast = await loadTestFastForLaunch(test.id);
-      if (fast.questions.length > 0) {
+      if (isQuestionListPlayable(fast.questions)) {
         setLocalQuestionsCache((prev) => ({ ...prev, [test.id]: fast.questions }));
         return fast.questions;
       }
       const bundle = await loadTestBundleFromFirestore(test.id);
-      if (bundle.questions.length > 0) {
+      if (isQuestionListPlayable(bundle.questions)) {
         setLocalQuestionsCache((prev) => ({ ...prev, [test.id]: bundle.questions }));
         return bundle.questions;
       }
@@ -2512,6 +2534,9 @@ function AppContent() {
           return parsedFromHtml.questions;
         }
       }
+      if (bundle.questions.length > 0) {
+        return bundle.questions;
+      }
     } catch {
       // ignore
     }
@@ -2521,9 +2546,7 @@ function AppContent() {
       return generateFallbackQuestionsForTest(test);
     }
 
-    const cleanSlots = createCleanCompanionSlots(test);
-    setLocalQuestionsCache((prev) => ({ ...prev, [test.id]: cleanSlots }));
-    return cleanSlots;
+    return createCleanCompanionSlots(test);
   };
 
   // Load raw test paper source for a test (checks Local Cache, Built-In Asset, Permanent IndexedDB Vault, and Server chunks)
@@ -2602,24 +2625,16 @@ function AppContent() {
     const preferHtml = launchMode !== 'practice';
 
     let qs = localQuestionsCache[test.id] || [];
-    const hasPlayableCachedQs =
-      qs.length > 0 &&
-      Boolean(
-        qs[0]?.imageEn ||
-          qs[0]?.imageHi ||
-          qs[0]?.imageUrl ||
-          (Array.isArray(qs[0]?.imageUrls) && qs[0].imageUrls.length > 0) ||
-          (String(qs[0]?.questionEn || qs[0]?.questionHi || '').trim().length >= 22 &&
-            !/^(biology|physics|chemistry|botany|zoology)$/i.test(
-              String(qs[0]?.questionEn || qs[0]?.questionHi || '').trim()
-            ))
-      );
+    const hasPlayableCachedQs = isQuestionListPlayable(qs);
+    const cachedHtml = localRawHtmlCache[test.id] || '';
+    const hasCachedHtml = cachedHtml.trim().length > 200;
 
     // INSTANT 0ms LAUNCH PATH for all HTML tests — never block on 'Opening Test Paper...' modal!
     if (preferHtml) {
-      const initialQs = qs.length > 0 ? qs : createCleanCompanionSlots(test);
-      setLocalRawHtmlCache({});
-      setLocalQuestionsCache({ ...BUILT_IN_COMPANION_QUESTIONS, [test.id]: initialQs });
+      const initialQs = hasPlayableCachedQs ? qs : createCleanCompanionSlots(test);
+      if (hasPlayableCachedQs) {
+        setLocalQuestionsCache({ ...BUILT_IN_COMPANION_QUESTIONS, [test.id]: initialQs });
+      }
       setTests((prev) =>
         prev.map((t) => (t.id === test.id ? { ...t, playCount: (t.playCount || 0) + 1 } : t))
       );
@@ -2630,17 +2645,17 @@ function AppContent() {
         meta: test,
         questions: initialQs,
         practiceMode: false,
-        rawHtmlContent: '',
+        rawHtmlContent: hasCachedHtml ? cachedHtml : '',
         initialHtmlMode: true,
-        useServerHtmlStream: true,
+        useServerHtmlStream: !hasCachedHtml,
         reviewAttempt: null,
       });
 
       // Hydrate compact answer keys, /qimg URLs, OR Firestore-backed rawHtml without blocking UI
-      if (!hasPlayableCachedQs && test.id !== 'prayas_06') {
+      if ((!hasPlayableCachedQs || !hasCachedHtml) && test.id !== 'prayas_06') {
         void loadTestFastForLaunch(test.id)
           .then((fastLaunch) => {
-            if (fastLaunch.questions.length > 0) {
+            if (isQuestionListPlayable(fastLaunch.questions)) {
               setLocalQuestionsCache((prev) => ({
                 ...prev,
                 [test.id]: fastLaunch.questions,
@@ -2687,7 +2702,7 @@ function AppContent() {
         }
       } else if (!hasPlayableCachedQs) {
         const fast = await loadTestFastForLaunch(test.id);
-        if (fast.questions.length > 0) {
+        if (isQuestionListPlayable(fast.questions)) {
           qs = fast.questions;
         } else {
           const bundle = await loadTestBundleFromFirestore(test.id);
@@ -2695,7 +2710,7 @@ function AppContent() {
           if (bundle.questions.length > 0) qs = bundle.questions;
         }
       }
-      if (qs.length === 0 && rawHtml) {
+      if (!isQuestionListPlayable(qs) && rawHtml) {
         const parsed = parseCbtHtmlFile(rawHtml, test.title);
         if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
           qs = parsed.questions;
@@ -2705,8 +2720,9 @@ function AppContent() {
         qs = createCleanCompanionSlots(test);
       }
 
-      setLocalRawHtmlCache({});
-      setLocalQuestionsCache({ ...BUILT_IN_COMPANION_QUESTIONS, [test.id]: qs });
+      if (isQuestionListPlayable(qs)) {
+        setLocalQuestionsCache({ ...BUILT_IN_COMPANION_QUESTIONS, [test.id]: qs });
+      }
 
       setTests((prev) =>
         prev.map((t) => (t.id === test.id ? { ...t, playCount: (t.playCount || 0) + 1 } : t))

@@ -90,7 +90,12 @@ function hasMeaningfulTextForVault(q: CbtQuestion): boolean {
   const best = en.length >= hi.length ? en : hi;
   if (best.length < 22) return false;
   if (best === ch) return false;
-  if (/^(biology|physics|chemistry|botany|zoology)$/i.test(best)) return false;
+  if (/^(biology|physics|chemistry|botany|zoology|mathematics|science|neet(\s+syllabus)?)$/i.test(best)) {
+    return false;
+  }
+  if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(best)) {
+    return false;
+  }
   if (/refer to (question|the)|select the correct option/i.test(best) && best.length < 110) {
     return false;
   }

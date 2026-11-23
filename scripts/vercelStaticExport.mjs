@@ -15,76 +15,8 @@ const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const DIST_STATIC_DIR = path.join(DIST_DIR, 'static-store');
 
 const DUPLICATE_TEST_FILE_ALIASES = {
-  test_mwc3q61o: 'test_mwdhw8uw_3_6bsu',
   test_mwc4ird4: 'test_mwdrmwl7_1_xbuf',
   test_mwc4heg5: 'test_mwdrmtnf_0_v02j',
-};
-
-// Unique, non-overlapping subject-matched slices for tests whose original .bin was missing or a 1KB stub
-const CURATED_FALLBACK_SPECS = {
-  // Bio Booster 01-03, 05-07 (90 Biology Qs each from different FST papers)
-  test_mwdhvcaq_0_eafm: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrmtnf_0_v02j', start: 90, count: 90 }],
-  },
-  test_mwdhvobl_1_0qjb: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrn6mc_2_lqi5', start: 90, count: 90 }],
-  },
-  test_mwdhw157_2_27vi: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnias_3_z7eb', start: 90, count: 90 }],
-  },
-  test_mwdhwiv3_4_an2y: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnnt6_4_3yea', start: 90, count: 90 }],
-  },
-  test_mwdhwth6_5_twu2: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnqhm_5_qmui', start: 90, count: 90 }],
-  },
-  test_mwdhx1l7_6_azuh: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnte7_6_cs4x', start: 90, count: 90 }],
-  },
-  // RTS Syllabus & Scheduled (90 Biology Qs from AIATS-01)
-  test_mwev95mh: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdt74ve', start: 90, count: 90 }],
-  },
-  // SARVAM PRAYAS — Minor Test 07 (45 Physics Qs rotated from NRTS-02 so even Q1 is distinct)
-  sarvam_prayas_minor_07_physics_20261105_mwhwucn1: {
-    subjectLabel: 'Physics',
-    slices: [
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 10, count: 35 },
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 0, count: 10 },
-    ],
-  },
-  // NEET Botany 387 MCQs Diwali (387 Botany/Biology Qs across NRTS-01..07 + FST-02 + PRAYAS-03)
-  neet_botany_387_video_v3_mwhxg7oh: {
-    subjectLabel: 'Botany',
-    slices: [
-      { sourceId: 'test_mwdt8hkm_0_b25g', start: 90, count: 45 },
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 90, count: 45 },
-      { sourceId: 'test_mwdt8qzq_2_du0l', start: 90, count: 45 },
-      { sourceId: 'test_mwdt8wxc_3_lz0e', start: 90, count: 45 },
-      { sourceId: 'test_mwdt95jd_5_u9p0', start: 90, count: 45 },
-      { sourceId: 'test_mwdt9cn6_6_dsz2', start: 90, count: 45 },
-      { sourceId: 'test_mwdrmwl7_1_xbuf', start: 90, count: 90 },
-      { sourceId: 'test_mwdrf1ga_2_kzkl', start: 0, count: 27 },
-    ],
-  },
-  // NEET UG 2027 - Sample Paper 2 (180Q: 45 Physics + 45 Chemistry + 90 Zoology)
-  test_mwf3a4c1: {
-    subjectLabel: 'Full Syllabus',
-    slices: [
-      { sourceId: 'test_mwdrnnt6_4_3yea', start: 5, count: 40 },
-      { sourceId: 'test_mwdrnnt6_4_3yea', start: 0, count: 5 },
-      { sourceId: 'test_mwdrnqhm_5_qmui', start: 45, count: 45 },
-      { sourceId: 'test_mwdt8hkm_0_b25g', start: 135, count: 45 },
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 135, count: 45 },
-    ],
-  },
 };
 
 function ensureDir(dir) {
@@ -118,6 +50,9 @@ function isPlaceholderQuestionText(str) {
   const s = String(str || '').trim();
   if (!s) return true;
   if (/^(physics|chemistry|biology|botany|zoology|mathematics|science|neet(\s+syllabus)?|question\s*\d*)$/i.test(s)) {
+    return true;
+  }
+  if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(s)) {
     return true;
   }
   if (/^प्रश्न\s*\d+/i.test(s) && s.length < 48) return true;
@@ -186,7 +121,9 @@ function restoreJsonBufferFromBinaryFrame(raw) {
 
 function unpackBinaryToJsonBuffer(packed) {
   let raw = packed;
-  if (packed.byteLength >= 2 && packed[0] === 0x1f && packed[1] === 0x8b) {
+  if (packed.byteLength > 10 && packed.subarray(0, 10).toString('ascii') === 'VS_Test_Z1') {
+    raw = zlib.inflateSync(packed.subarray(10));
+  } else if (packed.byteLength >= 2 && packed[0] === 0x1f && packed[1] === 0x8b) {
     raw = zlib.gunzipSync(packed);
   }
   if (isDirectJsonBuffer(raw)) {
@@ -240,7 +177,12 @@ function hasMeaningfulQuestionText(q) {
   const best = en.length >= hi.length ? en : hi;
   if (best.length < 22) return false;
   if (best === ch) return false;
-  if (/^(biology|physics|chemistry|botany|zoology)$/i.test(best)) return false;
+  if (/^(biology|physics|chemistry|botany|zoology|mathematics|science|neet(\s+syllabus)?)$/i.test(best)) {
+    return false;
+  }
+  if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(best)) {
+    return false;
+  }
   if (/refer to (question|the)|select the correct option/i.test(best) && best.length < 110) {
     return false;
   }
@@ -476,6 +418,82 @@ function extractQuestionsFromRawHtml(rawHtml, storedQuestions = [], meta = {}) {
     });
   }
 
+  // Format 5: Base91 packed <script id="p" type="text/plain"> + const M={mode:"img",ks:[...],b91:"..."} (e.g. SARVAM PRAYAS 8)
+  const mVal = extractJsonAfterVar(html, ['M']);
+  if (mVal && typeof mVal === 'object' && !Array.isArray(mVal) && Array.isArray(mVal.ks) && mVal.ks.length > 0 && typeof mVal.b91 === 'string' && mVal.b91.length >= 90) {
+    const pMatch = html.match(/<script\s+id=["']p["']\s+type=["']text\/plain["']>([\s\S]*?)<\/script>/i);
+    if (pMatch && pMatch[1]) {
+      try {
+        const b91Alphabet = mVal.b91;
+        const lookup = new Int16Array(128).fill(-1);
+        for (let i = 0; i < b91Alphabet.length; i++) {
+          lookup[b91Alphabet.charCodeAt(i)] = i;
+        }
+        const rawStr = pMatch[1];
+        const outBytes = [];
+        let v = -1, b = 0, n = 0;
+        for (let i = 0; i < rawStr.length; i++) {
+          const code = rawStr.charCodeAt(i);
+          const c = code < 128 ? lookup[code] : -1;
+          if (c < 0) continue;
+          if (v < 0) v = c;
+          else {
+            v += c * 91;
+            b |= v << n;
+            n += (v & 8191) > 88 ? 13 : 14;
+            do { outBytes.push(b & 255); b >>= 8; n -= 8; } while (n > 7);
+            v = -1;
+          }
+        }
+        if (v >= 0) outBytes.push((b | (v << n)) & 255);
+        const bn = Buffer.from(outBytes);
+        if (bn.byteLength > 8) {
+          const lzL = bn.readUInt32LE(0);
+          let pt = 4 + lzL;
+          if (pt < bn.byteLength) {
+            const nI = bn[pt++];
+            const mimes = ['image/webp', 'image/png', 'image/jpeg'];
+            const imgs = [];
+            for (let i = 0; i < nI && pt + 5 <= bn.byteLength; i++) {
+              const mt = mimes[bn[pt++]] || 'image/webp';
+              const sz = bn.readUInt32LE(pt);
+              pt += 4;
+              if (pt + sz > bn.byteLength) break;
+              const slice = bn.subarray(pt, pt + sz);
+              imgs.push(`data:${mt};base64,${slice.toString('base64')}`);
+              pt += sz;
+            }
+            const qCount = mVal.ks.length;
+            if (imgs.length >= qCount) {
+              const opts = defaultNeetOptions();
+              const defaultCh = String(mVal.subj || meta?.subject || meta?.chapter || 'NEET Syllabus');
+              return mVal.ks.map((ansVal, idx) => {
+                const stored = storedQuestions[idx] || {};
+                const hiImg = imgs[idx] || '';
+                const enImg = imgs[idx + qCount] || hiImg;
+                return {
+                  id: idx + 1,
+                  chapter: String(stored.chapter || defaultCh),
+                  questionHi: '',
+                  questionEn: '',
+                  optionsHi: opts.optionsHi,
+                  optionsEn: opts.optionsEn,
+                  correctAnswer: mapAnswerValue(ansVal ?? stored.correctAnswer),
+                  explanation: { hi: '', en: '' },
+                  hasImage: Boolean(hiImg || enImg),
+                  imageHi: hiImg || undefined,
+                  imageEn: enImg || undefined,
+                };
+              });
+            }
+          }
+        }
+      } catch {
+        // fallback
+      }
+    }
+  }
+
   return storedQuestions;
 }
 
@@ -637,62 +655,6 @@ function resolvePlayableTestPayload(rawId, targetMeta) {
     };
   }
 
-  const spec = CURATED_FALLBACK_SPECS[rawId];
-  if (spec) {
-    const slicedQuestions = [];
-    const usedSourcesMap = new Map();
-    for (const sl of spec.slices) {
-      const src = getResolvedSourceTest(sl.sourceId);
-      if (!src || !Array.isArray(src.questions)) continue;
-      usedSourcesMap.set(src.sourceId, src);
-      const end = Math.min(src.questions.length, sl.start + sl.count);
-      for (let i = sl.start; i < end; i++) {
-        const origQ = src.questions[i];
-        if (!origQ) continue;
-        slicedQuestions.push({
-          ...origQ,
-          id: slicedQuestions.length + 1,
-          chapter:
-            origQ.chapter && origQ.chapter !== 'NEET Syllabus'
-              ? origQ.chapter
-              : spec.subjectLabel || 'NEET Syllabus',
-          _srcTestId: src.sourceId,
-          _srcIdx: i,
-        });
-      }
-    }
-    if (slicedQuestions.length > 0) {
-      return {
-        sourceId: rawId,
-        meta: targetMeta || { id: rawId },
-        questions: slicedQuestions,
-        rawHtml: '',
-        usedSources: Array.from(usedSourcesMap.values()),
-      };
-    }
-  }
-
-  // Generic final fallback if a brand-new stub ID ever lacks slices
-  const isBio90 =
-    Number(targetMeta?.totalQuestions || 0) === 90 ||
-    /bio|bts/i.test(String(targetMeta?.title || ''));
-  const fallbackSource = getResolvedSourceTest(
-    isBio90 ? 'test_mwdhw8uw_3_6bsu' : 'test_mwdt8qzq_2_du0l'
-  );
-  if (fallbackSource) {
-    const qs = fallbackSource.questions.map((q, i) => ({
-      ...q,
-      _srcTestId: fallbackSource.sourceId,
-      _srcIdx: i,
-    }));
-    return {
-      sourceId: rawId,
-      meta: targetMeta || fallbackSource.meta || { id: rawId },
-      questions: qs,
-      rawHtml: '',
-      usedSources: [fallbackSource],
-    };
-  }
   return null;
 }
 
@@ -755,7 +717,9 @@ function patchHtmlForPortalIframe(sourceHtml, opts) {
     var origSetItem = Storage.prototype.setItem;
     var origRemoveItem = Storage.prototype.removeItem;
     var isIsolatedCbtKey = function(k) {
-      return Boolean(k && (GENERIC_CBT_KEYS[k] || k.indexOf('neet_cbt_') === 0 || k.indexOf('_v4_state') !== -1 || k.indexOf('cbt_state') !== -1));
+      if (!k || typeof k !== 'string') return false;
+      if (k.indexOf('vs_iso_') === 0 || k.indexOf('vs_neet_') === 0 || k.indexOf('vs_client_') === 0 || k.indexOf('firebase:') === 0 || k === 'neet_cbt_student_session' || k === 'neet_cbt_theme_mode') return false;
+      return true;
     };
     Storage.prototype.getItem = function(k) {
       try {

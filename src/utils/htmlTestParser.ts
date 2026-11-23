@@ -1872,26 +1872,99 @@ export function parseCbtHtmlFile(
         };
 
         if (qCount >= 1) {
+          let b91Images: string[] = [];
+          if (typeof mObj.b91 === 'string' && mObj.b91.length >= 90) {
+            const pMatch = htmlContent.match(/<script\s+id=["']p["']\s+type=["']text\/plain["']>([\s\S]*?)<\/script>/i);
+            if (pMatch && pMatch[1]) {
+              try {
+                const b91Alphabet = mObj.b91;
+                const lookup = new Int16Array(128).fill(-1);
+                for (let i = 0; i < b91Alphabet.length; i++) {
+                  lookup[b91Alphabet.charCodeAt(i)] = i;
+                }
+                const rawStr = pMatch[1];
+                const outBytes: number[] = [];
+                let v = -1;
+                let b = 0;
+                let n = 0;
+                for (let i = 0; i < rawStr.length; i++) {
+                  const code = rawStr.charCodeAt(i);
+                  const c = code < 128 ? lookup[code] : -1;
+                  if (c < 0) continue;
+                  if (v < 0) v = c;
+                  else {
+                    v += c * 91;
+                    b |= v << n;
+                    n += (v & 8191) > 88 ? 13 : 14;
+                    do {
+                      outBytes.push(b & 255);
+                      b >>= 8;
+                      n -= 8;
+                    } while (n > 7);
+                    v = -1;
+                  }
+                }
+                if (v >= 0) outBytes.push((b | (v << n)) & 255);
+                const bn = new Uint8Array(outBytes);
+                if (bn.byteLength > 8) {
+                  const view = new DataView(bn.buffer, bn.byteOffset, bn.byteLength);
+                  const lzL = view.getUint32(0, true);
+                  let pt = 4 + lzL;
+                  if (pt < bn.byteLength) {
+                    const nI = bn[pt++];
+                    const mimes = ['image/webp', 'image/png', 'image/jpeg'];
+                    for (let i = 0; i < nI && pt + 5 <= bn.byteLength; i++) {
+                      const mt = mimes[bn[pt++]] || 'image/webp';
+                      const sz = view.getUint32(pt, true);
+                      pt += 4;
+                      if (pt + sz > bn.byteLength) break;
+                      const slice = bn.subarray(pt, pt + sz);
+                      let binStr = '';
+                      const chunkSz = 8192;
+                      for (let k = 0; k < slice.length; k += chunkSz) {
+                        binStr += String.fromCharCode.apply(
+                          null,
+                          Array.from(slice.subarray(k, k + chunkSz))
+                        );
+                      }
+                      b91Images.push(`data:${mt};base64,${btoa(binStr)}`);
+                      pt += sz;
+                    }
+                  }
+                }
+              } catch {
+                b91Images = [];
+              }
+            }
+          }
           const displayTitle = parsedMeta.title || fallbackFileName.replace(/\.html?$/i, '');
-          rawQuestionsList = Array.from({ length: qCount }, (_, idx) => ({
-            id: idx + 1,
-            chapter: topicRaw || 'NEET Syllabus',
-            questionHi: `प्रश्न ${idx + 1} (${displayTitle})`,
-            questionEn: `Question ${idx + 1} (${displayTitle})`,
-            optionsEn: [
-              { id: '1', text: 'Option (1)' },
-              { id: '2', text: 'Option (2)' },
-              { id: '3', text: 'Option (3)' },
-              { id: '4', text: 'Option (4)' },
-            ],
-            optionsHi: [
-              { id: '1', text: 'विकल्प (1)' },
-              { id: '2', text: 'विकल्प (2)' },
-              { id: '3', text: 'विकल्प (3)' },
-              { id: '4', text: 'विकल्प (4)' },
-            ],
-            correctAnswer: ksArr[idx] !== undefined ? String(ksArr[idx]) : '1',
-          }));
+          rawQuestionsList = Array.from({ length: qCount }, (_, idx) => {
+            const hiImg = b91Images[idx] || '';
+            const enImg = b91Images[idx + qCount] || hiImg;
+            const hasB91Img = Boolean(hiImg || enImg);
+            return {
+              id: idx + 1,
+              chapter: topicRaw || mappedSubject || 'NEET Syllabus',
+              questionHi: hasB91Img ? '' : `प्रश्न ${idx + 1} (${displayTitle})`,
+              questionEn: hasB91Img ? '' : `Question ${idx + 1} (${displayTitle})`,
+              optionsEn: [
+                { id: '1', text: 'Option (1)' },
+                { id: '2', text: 'Option (2)' },
+                { id: '3', text: 'Option (3)' },
+                { id: '4', text: 'Option (4)' },
+              ],
+              optionsHi: [
+                { id: '1', text: 'विकल्प (1)' },
+                { id: '2', text: 'विकल्प (2)' },
+                { id: '3', text: 'विकल्प (3)' },
+                { id: '4', text: 'विकल्प (4)' },
+              ],
+              correctAnswer: ksArr[idx] !== undefined ? String(ksArr[idx]) : '1',
+              hasImage: hasB91Img,
+              imageHi: hiImg || undefined,
+              imageEn: enImg || undefined,
+            };
+          });
         }
       }
     }
@@ -2840,6 +2913,9 @@ export function buildStandaloneCbtHtmlFromQuestions(
     const s = String(txt || '').trim();
     if (!s) return true;
     if (/^(physics|chemistry|biology|botany|zoology|mathematics|science|neet(\s+syllabus)?|question\s*\d*)$/i.test(s)) {
+      return true;
+    }
+    if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(s)) {
       return true;
     }
     if (/^प्रश्न\s*\d+/i.test(s) && s.length < 48) return true;

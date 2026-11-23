@@ -120,74 +120,11 @@ async function withTestWriteLock<T>(safeId: string, fn: () => Promise<T>): Promi
   }
 }
 
+const inflateAsync = promisify(zlib.inflate);
+
 const DUPLICATE_TEST_FILE_ALIASES: Record<string, string> = {
-  test_mwc3q61o: 'test_mwdhw8uw_3_6bsu',
   test_mwc4ird4: 'test_mwdrmwl7_1_xbuf',
   test_mwc4heg5: 'test_mwdrmtnf_0_v02j',
-};
-
-const CURATED_FALLBACK_SPECS: Record<
-  string,
-  { subjectLabel: string; slices: Array<{ sourceId: string; start: number; count: number }> }
-> = {
-  test_mwdhvcaq_0_eafm: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrmtnf_0_v02j', start: 90, count: 90 }],
-  },
-  test_mwdhvobl_1_0qjb: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrn6mc_2_lqi5', start: 90, count: 90 }],
-  },
-  test_mwdhw157_2_27vi: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnias_3_z7eb', start: 90, count: 90 }],
-  },
-  test_mwdhwiv3_4_an2y: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnnt6_4_3yea', start: 90, count: 90 }],
-  },
-  test_mwdhwth6_5_twu2: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnqhm_5_qmui', start: 90, count: 90 }],
-  },
-  test_mwdhx1l7_6_azuh: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdrnte7_6_cs4x', start: 90, count: 90 }],
-  },
-  test_mwev95mh: {
-    subjectLabel: 'Biology',
-    slices: [{ sourceId: 'test_mwdt74ve', start: 90, count: 90 }],
-  },
-  sarvam_prayas_minor_07_physics_20261105_mwhwucn1: {
-    subjectLabel: 'Physics',
-    slices: [
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 10, count: 35 },
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 0, count: 10 },
-    ],
-  },
-  neet_botany_387_video_v3_mwhxg7oh: {
-    subjectLabel: 'Botany',
-    slices: [
-      { sourceId: 'test_mwdt8hkm_0_b25g', start: 90, count: 45 },
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 90, count: 45 },
-      { sourceId: 'test_mwdt8qzq_2_du0l', start: 90, count: 45 },
-      { sourceId: 'test_mwdt8wxc_3_lz0e', start: 90, count: 45 },
-      { sourceId: 'test_mwdt95jd_5_u9p0', start: 90, count: 45 },
-      { sourceId: 'test_mwdt9cn6_6_dsz2', start: 90, count: 45 },
-      { sourceId: 'test_mwdrmwl7_1_xbuf', start: 90, count: 90 },
-      { sourceId: 'test_mwdrf1ga_2_kzkl', start: 0, count: 27 },
-    ],
-  },
-  test_mwf3a4c1: {
-    subjectLabel: 'Full Syllabus',
-    slices: [
-      { sourceId: 'test_mwdrnnt6_4_3yea', start: 5, count: 40 },
-      { sourceId: 'test_mwdrnnt6_4_3yea', start: 0, count: 5 },
-      { sourceId: 'test_mwdrnqhm_5_qmui', start: 45, count: 45 },
-      { sourceId: 'test_mwdt8hkm_0_b25g', start: 135, count: 45 },
-      { sourceId: 'test_mwdt8k7h_1_j9x0', start: 135, count: 45 },
-    ],
-  },
 };
 
 function hasMeaningfulQuestionText(q: Record<string, unknown>): boolean {
@@ -197,7 +134,12 @@ function hasMeaningfulQuestionText(q: Record<string, unknown>): boolean {
   const best = en.length >= hi.length ? en : hi;
   if (best.length < 22) return false;
   if (best === ch) return false;
-  if (/^(biology|physics|chemistry|botany|zoology)$/i.test(best)) return false;
+  if (/^(biology|physics|chemistry|botany|zoology|mathematics|science|neet(\s+syllabus)?)$/i.test(best)) {
+    return false;
+  }
+  if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(best)) {
+    return false;
+  }
   if (/refer to (question|the)|select the correct option/i.test(best) && best.length < 110) {
     return false;
   }
@@ -305,7 +247,10 @@ function isDirectJsonBuffer(buf: Buffer): boolean {
 }
 
 function unpackBinaryToJsonBuffer(packedGz: Buffer): Buffer {
-  const raw = zlib.gunzipSync(packedGz);
+  const raw =
+    packedGz.byteLength > 10 && packedGz.subarray(0, 10).toString('ascii') === 'VS_Test_Z1'
+      ? zlib.inflateSync(packedGz.subarray(10))
+      : zlib.gunzipSync(packedGz);
   if (isDirectJsonBuffer(raw)) {
     return raw;
   }
@@ -317,7 +262,10 @@ async function packJsonToBinaryAsync(jsonStr: string): Promise<Buffer> {
 }
 
 async function unpackBinaryToJsonBufferAsync(packedGz: Buffer): Promise<Buffer> {
-  const raw = await gunzipAsync(packedGz);
+  const raw =
+    packedGz.byteLength > 10 && packedGz.subarray(0, 10).toString('ascii') === 'VS_Test_Z1'
+      ? await inflateAsync(packedGz.subarray(10))
+      : await gunzipAsync(packedGz);
   if (isDirectJsonBuffer(raw)) {
     return raw;
   }
@@ -891,6 +839,9 @@ async function startServer() {
     if (/^(physics|chemistry|biology|botany|zoology|mathematics|science|neet(\s+syllabus)?|question\s*\d*)$/i.test(s)) {
       return true;
     }
+    if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(s)) {
+      return true;
+    }
     if (/^प्रश्न\s*\d+/i.test(s) && s.length < 48) return true;
     if (/^Question\s*\d+/i.test(s) && s.length < 48) return true;
     return false;
@@ -1140,6 +1091,92 @@ async function startServer() {
       });
     }
 
+    // Format 5: Base91 packed <script id="p" type="text/plain"> + const M={mode:"img",ks:[...],b91:"..."} (e.g. SARVAM PRAYAS 8)
+    const mVal = extractJsonAfterVarServer(html, ['M']);
+    if (mVal && typeof mVal === 'object' && !Array.isArray(mVal)) {
+      const mObj = mVal as { mode?: string; subj?: string; ks?: unknown[]; b91?: string };
+      if (Array.isArray(mObj.ks) && mObj.ks.length > 0 && typeof mObj.b91 === 'string' && mObj.b91.length >= 90) {
+        const pMatch = html.match(/<script\s+id=["']p["']\s+type=["']text\/plain["']>([\s\S]*?)<\/script>/i);
+        if (pMatch && pMatch[1]) {
+          try {
+            const b91Alphabet = mObj.b91;
+            const lookup = new Int16Array(128).fill(-1);
+            for (let i = 0; i < b91Alphabet.length; i++) {
+              lookup[b91Alphabet.charCodeAt(i)] = i;
+            }
+            const rawStr = pMatch[1];
+            const outBytes: number[] = [];
+            let v = -1;
+            let b = 0;
+            let n = 0;
+            for (let i = 0; i < rawStr.length; i++) {
+              const code = rawStr.charCodeAt(i);
+              const c = code < 128 ? lookup[code] : -1;
+              if (c < 0) continue;
+              if (v < 0) {
+                v = c;
+              } else {
+                v += c * 91;
+                b |= v << n;
+                n += (v & 8191) > 88 ? 13 : 14;
+                do {
+                  outBytes.push(b & 255);
+                  b >>= 8;
+                  n -= 8;
+                } while (n > 7);
+                v = -1;
+              }
+            }
+            if (v >= 0) outBytes.push((b | (v << n)) & 255);
+            const bn = Buffer.from(outBytes);
+            if (bn.byteLength > 8) {
+              const lzL = bn.readUInt32LE(0);
+              let pt = 4 + lzL;
+              if (pt < bn.byteLength) {
+                const nI = bn[pt++];
+                const mimes = ['image/webp', 'image/png', 'image/jpeg'];
+                const imgs: string[] = [];
+                for (let i = 0; i < nI && pt + 5 <= bn.byteLength; i++) {
+                  const mt = mimes[bn[pt++]] || 'image/webp';
+                  const sz = bn.readUInt32LE(pt);
+                  pt += 4;
+                  if (pt + sz > bn.byteLength) break;
+                  const slice = bn.subarray(pt, pt + sz);
+                  imgs.push(`data:${mt};base64,${slice.toString('base64')}`);
+                  pt += sz;
+                }
+                const qCount = mObj.ks.length;
+                if (imgs.length >= qCount) {
+                  const opts = defaultNeetOptionsServer();
+                  const defaultCh = String(mObj.subj || meta?.subject || meta?.chapter || 'NEET Syllabus');
+                  return mObj.ks.map((ansVal, idx) => {
+                    const stored = (storedQuestions[idx] || {}) as Record<string, unknown>;
+                    const hiImg = imgs[idx] || '';
+                    const enImg = imgs[idx + qCount] || hiImg;
+                    return {
+                      id: idx + 1,
+                      chapter: String(stored.chapter || defaultCh),
+                      questionHi: '',
+                      questionEn: '',
+                      optionsHi: opts.optionsHi,
+                      optionsEn: opts.optionsEn,
+                      correctAnswer: mapAnswerValueServer(ansVal ?? stored.correctAnswer),
+                      explanation: { hi: '', en: '' },
+                      hasImage: Boolean(hiImg || enImg),
+                      imageHi: hiImg || undefined,
+                      imageEn: enImg || undefined,
+                    };
+                  });
+                }
+              }
+            }
+          } catch {
+            // fallback
+          }
+        }
+      }
+    }
+
     return storedQuestions;
   }
 
@@ -1284,7 +1321,9 @@ async function startServer() {
     var origRemoveItem = Storage.prototype.removeItem;
 
     var isIsolatedCbtKey = function(k) {
-      return Boolean(k && (GENERIC_CBT_KEYS[k] || k.indexOf('neet_cbt_') === 0 || k.indexOf('_v4_state') !== -1 || k.indexOf('cbt_state') !== -1));
+      if (!k || typeof k !== 'string') return false;
+      if (k.indexOf('vs_iso_') === 0 || k.indexOf('vs_neet_') === 0 || k.indexOf('vs_client_') === 0 || k.indexOf('firebase:') === 0 || k === 'neet_cbt_student_session' || k === 'neet_cbt_theme_mode') return false;
+      return true;
     };
     Storage.prototype.getItem = function(k) {
       try {
@@ -1755,64 +1794,26 @@ async function startServer() {
   async function resolveTestBufferForServe(rawId: string): Promise<Buffer | null> {
     const safeId = DUPLICATE_TEST_FILE_ALIASES[rawId] || rawId;
     const cachedBuf = testFileBufferCache.get(rawId);
-    if (cachedBuf) return cachedBuf;
+    if (cachedBuf && isTestBufferPlayable(cachedBuf)) return cachedBuf;
 
     const primaryBuf = await readTestJsonBufferFromDisk(safeId);
     if (primaryBuf && isTestBufferPlayable(primaryBuf)) {
+      if (safeId !== rawId) {
+        const targetMeta = memoryStore.tests.find((t) => String(t.id) === rawId);
+        try {
+          const parsed = JSON.parse(primaryBuf.toString('utf-8'));
+          parsed.meta = { ...(parsed.meta || {}), ...(targetMeta || {}), id: rawId };
+          const aliasedBuf = Buffer.from(JSON.stringify(parsed), 'utf-8');
+          setCachedTestBuffer(rawId, aliasedBuf);
+          return aliasedBuf;
+        } catch {
+          // fallback to primaryBuf
+        }
+      }
       setCachedTestBuffer(rawId, primaryBuf);
       return primaryBuf;
     }
 
-    const targetMeta = memoryStore.tests.find((t) => String(t.id) === rawId);
-    const spec = CURATED_FALLBACK_SPECS[rawId];
-    if (spec) {
-      const slicedQuestions: Record<string, unknown>[] = [];
-      for (const sl of spec.slices) {
-        const srcQs = await loadExtractedQuestionsForSource(sl.sourceId);
-        const end = Math.min(srcQs.length, sl.start + sl.count);
-        for (let i = sl.start; i < end; i++) {
-          const origQ = srcQs[i];
-          if (!origQ) continue;
-          slicedQuestions.push({
-            ...origQ,
-            id: slicedQuestions.length + 1,
-            chapter:
-              origQ.chapter && origQ.chapter !== 'NEET Syllabus'
-                ? origQ.chapter
-                : spec.subjectLabel || 'NEET Syllabus',
-          });
-        }
-      }
-      if (slicedQuestions.length > 0) {
-        const healedBuf = Buffer.from(
-          JSON.stringify({
-            meta: targetMeta || { id: rawId },
-            questions: slicedQuestions,
-            rawHtml: '',
-          }),
-          'utf-8'
-        );
-        setCachedTestBuffer(rawId, healedBuf);
-        return healedBuf;
-      }
-    }
-
-    const isBio90 =
-      Number(targetMeta?.totalQuestions || 0) === 90 ||
-      /bio|bts/i.test(String(targetMeta?.title || ''));
-    const donorId = isBio90 ? 'test_mwdhw8uw_3_6bsu' : 'test_mwdt8qzq_2_du0l';
-    const donorBuf = await readTestJsonBufferFromDisk(donorId);
-    if (donorBuf) {
-      const donorParsed = JSON.parse(donorBuf.toString('utf-8'));
-      const healedPayload = {
-        meta: targetMeta || donorParsed.meta || { id: rawId },
-        questions: Array.isArray(donorParsed.questions) ? donorParsed.questions : [],
-        rawHtml: '',
-      };
-      const healedBuf = Buffer.from(JSON.stringify(healedPayload), 'utf-8');
-      setCachedTestBuffer(rawId, healedBuf);
-      return healedBuf;
-    }
     return null;
   }
 
@@ -1916,6 +1917,7 @@ async function startServer() {
 
     const sendHtmlResponse = async (htmlStr: string) => {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('X-VS-CBT-Paper', '1');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       if (acceptsGzip && htmlStr.length > 2048) {
         try {
@@ -2552,9 +2554,9 @@ async function startServer() {
           // ignore
         }
 
-        // Never overwrite a larger question set on disk with a smaller partial set
+        // Use the newly uploaded merged questions whenever non-empty
         const bestQuestions =
-          mergedSoFar.length >= prevQuestions.length ? mergedSoFar : prevQuestions;
+          mergedSoFar.length > 0 ? mergedSoFar : prevQuestions;
 
         const matchedMeta =
           memoryStore.tests.find((t) => String(t.id) === safeId) || meta || { id: safeId };
@@ -4064,6 +4066,14 @@ Generate a highly actionable, bilingual (Hindi + English) NCERT-grounded Revisio
   httpServer.timeout = 0;
   httpServer.keepAliveTimeout = 120000;
   httpServer.headersTimeout = 125000;
+
+  const publicStaticStore = path.join(__dirname, 'public', 'static-store');
+  const distStaticStore = path.join(__dirname, 'dist', 'static-store');
+  app.use('/static-store', express.static(publicStaticStore, { fallthrough: true }));
+  app.use('/static-store', express.static(distStaticStore, { fallthrough: true }));
+  app.use('/static-store', (_req, res) => {
+    res.status(404).json({ error: 'Static store asset not found' });
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

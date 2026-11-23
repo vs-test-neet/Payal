@@ -1787,7 +1787,12 @@ function areQuestionsPlayable(qs: CbtQuestion[]): boolean {
   const best = en.length >= hi.length ? en : hi;
   if (best.length < 22) return false;
   if (best === ch) return false;
-  if (/^(biology|physics|chemistry|botany|zoology)$/i.test(best)) return false;
+  if (/^(biology|physics|chemistry|botany|zoology|mathematics|science|neet(\s+syllabus)?)$/i.test(best)) {
+    return false;
+  }
+  if (/^(?:question|प्रश्न|q\.?)\s*\d+(?:\s*\([\s\S]*\)|\s*[-—:][\s\S]{0,120})?$/i.test(best)) {
+    return false;
+  }
   if (/refer to (question|the)|select the correct option/i.test(best) && best.length < 110) {
     return false;
   }
@@ -1843,6 +1848,65 @@ async function loadTestBundleFromCloudFirestore(
   }
 }
 
+const PREVIOUSLY_SUBSTITUTED_TEST_IDS = new Set([
+  'test_mwsinjp6',
+  'sarvam_prayas_minor_08_chemistry_20261119_mwpt8uh8',
+  'test_mwf3a4c1',
+  'sarvam_prayas_minor_07_physics_20261105_mwhwucn1',
+  'test_mwev95mh',
+  'test_mwdhvcaq_0_eafm',
+  'test_mwdhvobl_1_0qjb',
+  'test_mwdhw157_2_27vi',
+  'test_mwdhwiv3_4_an2y',
+  'test_mwdhwth6_5_twu2',
+  'test_mwdhx1l7_6_azuh',
+]);
+
+function isPoisonedDonorVaultData(
+  safeId: string,
+  vaultQs: CbtQuestion[],
+  vaultHtml: string
+): boolean {
+  const allowedSourceIds = new Set([safeId]);
+  if (safeId === 'test_mwc4ird4') allowedSourceIds.add('test_mwdrmwl7_1_xbuf');
+  if (safeId === 'test_mwc4heg5') allowedSourceIds.add('test_mwdrmtnf_0_v02j');
+
+  const q0 = vaultQs[0];
+  if (q0) {
+    const imgRef = String(
+      q0.imageHi || q0.imageEn || q0.imageUrl || (q0.imageUrls && q0.imageUrls[0]) || ''
+    );
+    const mStatic = imgRef.match(/\/static-store\/qimg\/([^/]+)\//);
+    if (mStatic && mStatic[1] && !allowedSourceIds.has(mStatic[1])) return true;
+    const mApi = imgRef.match(/\/api\/store\/test\/([^/]+)\/qimg\//);
+    if (mApi && mApi[1] && !allowedSourceIds.has(mApi[1])) return true;
+  }
+
+  if (vaultHtml) {
+    const mStaticHtml = vaultHtml.match(/\/static-store\/qimg\/([^/]+)\//);
+    if (mStaticHtml && mStaticHtml[1] && !allowedSourceIds.has(mStaticHtml[1])) return true;
+    const mApiHtml = vaultHtml.match(/\/api\/store\/test\/([^/]+)\/qimg\//);
+    if (mApiHtml && mApiHtml[1] && !allowedSourceIds.has(mApiHtml[1])) return true;
+  }
+
+  if (
+    safeId === 'sarvam_prayas_minor_08_chemistry_20261119_mwpt8uh8' &&
+    (!vaultHtml || !vaultHtml.includes('"b91"'))
+  ) {
+    return true;
+  }
+
+  if (
+    PREVIOUSLY_SUBSTITUTED_TEST_IDS.has(safeId) &&
+    vaultHtml.trim().length < 200 &&
+    vaultQs.length > 0
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function loadTestBundleFromFirestore(
   testId: string
 ): Promise<{ questions: CbtQuestion[]; rawHtml: string }> {
@@ -1865,13 +1929,18 @@ export async function loadTestBundleFromFirestore(
       getVaultTestQuestions(safeId),
       getVaultTestHtml(safeId),
     ]);
+    if (isPoisonedDonorVaultData(safeId, vaultQs, vaultHtml)) {
+      vaultQs = [];
+      vaultHtml = '';
+      void purgeVaultTestPayloads([safeId]).catch(() => {});
+    }
   } catch {
     vaultQs = [];
     vaultHtml = '';
   }
 
   if (vaultHtml.trim().length > 200 || areQuestionsPlayable(vaultQs)) {
-    if (vaultHtml.trim().length > 200 && vaultQs.length === 0) {
+    if (vaultHtml.trim().length > 200 && !areQuestionsPlayable(vaultQs)) {
       const parsedFromVault = parseCbtHtmlFile(vaultHtml, safeId);
       if (parsedFromVault && Array.isArray(parsedFromVault.questions) && parsedFromVault.questions.length > 0) {
         vaultQs = parsedFromVault.questions;
@@ -1930,7 +1999,7 @@ export async function loadTestBundleFromFirestore(
           // ignore
         }
       }
-      if (serverHtml.trim().length > 100 && serverQs.length === 0) {
+      if (serverHtml.trim().length > 100 && !areQuestionsPlayable(serverQs)) {
         const parsedFromHtml = parseCbtHtmlFile(serverHtml, serverMeta?.title || safeId);
         if (parsedFromHtml && Array.isArray(parsedFromHtml.questions) && parsedFromHtml.questions.length > 0) {
           serverQs = parsedFromHtml.questions;
@@ -1941,7 +2010,7 @@ export async function loadTestBundleFromFirestore(
     // fallback to Cloud Firestore
   }
 
-  if (serverHtml.trim().length > 0 || serverQs.length > 0) {
+  if (serverHtml.trim().length > 100 || areQuestionsPlayable(serverQs)) {
     setRamBundleCache(safeId, serverQs, serverHtml);
     if (serverMeta) {
       void saveTestToVault(serverMeta, serverQs, serverHtml).catch(() => {});
@@ -1953,13 +2022,32 @@ export async function loadTestBundleFromFirestore(
   const cloudBundle = await loadTestBundleFromCloudFirestore(safeId);
   if (cloudBundle.rawHtml.trim().length > 0 || cloudBundle.questions.length > 0) {
     let resolvedCloudQs = cloudBundle.questions;
-    if (resolvedCloudQs.length === 0 && cloudBundle.rawHtml.trim().length > 100) {
+    if (!areQuestionsPlayable(resolvedCloudQs) && cloudBundle.rawHtml.trim().length > 100) {
       const parsedCloud = parseCbtHtmlFile(cloudBundle.rawHtml, cloudBundle.meta?.title || safeId);
       if (parsedCloud?.questions?.length) resolvedCloudQs = parsedCloud.questions;
     }
     setRamBundleCache(safeId, resolvedCloudQs, cloudBundle.rawHtml);
     if (cloudBundle.meta) {
       void saveTestToVault(cloudBundle.meta, resolvedCloudQs, cloudBundle.rawHtml).catch(() => {});
+    }
+    if (!isStaticStoreHost && (cloudBundle.rawHtml.trim().length > 200 || areQuestionsPlayable(resolvedCloudQs))) {
+      void (async () => {
+        try {
+          if (resolvedCloudQs.length > 0 && cloudBundle.meta) {
+            await uploadQuestionsInChunksToServer(
+              safeId,
+              cloudBundle.meta,
+              resolvedCloudQs,
+              cloudBundle.rawHtml.trim().length > 500
+            );
+          }
+          if (cloudBundle.rawHtml.trim().length > 200) {
+            await uploadHtmlInChunksToServer(safeId, cloudBundle.rawHtml);
+          }
+        } catch {
+          // ignore background sync
+        }
+      })();
     }
     return { questions: resolvedCloudQs, rawHtml: cloudBundle.rawHtml };
   }
@@ -2010,7 +2098,49 @@ export async function loadTestFastForLaunch(
 ): Promise<{ questions: CbtQuestion[]; rawHtml: string; useServerHtmlStream: boolean }> {
   const safeId = testId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
 
-  // 1. Fast metadata+questions query (?skipHtml=1 or /static-store/test/:id.json)
+  // 1. Check RAM cache (0ms)
+  const cachedRam = ramTestBundleCache.get(safeId);
+  if (
+    cachedRam &&
+    (cachedRam.rawHtml.trim().length > 200 || areQuestionsPlayable(cachedRam.questions))
+  ) {
+    return {
+      questions: cachedRam.questions,
+      rawHtml: cachedRam.rawHtml,
+      useServerHtmlStream: false,
+    };
+  }
+
+  // 2. Offline local-only check via IndexedDB Vault (<5ms)
+  let vaultQs: CbtQuestion[] = [];
+  let vaultHtml = '';
+  try {
+    [vaultQs, vaultHtml] = await Promise.all([
+      getVaultTestQuestions(safeId),
+      getVaultTestHtml(safeId),
+    ]);
+    if (isPoisonedDonorVaultData(safeId, vaultQs, vaultHtml)) {
+      vaultQs = [];
+      vaultHtml = '';
+      void purgeVaultTestPayloads([safeId]).catch(() => {});
+    }
+    if (vaultHtml.trim().length > 200) {
+      if (!areQuestionsPlayable(vaultQs)) {
+        const parsedVault = parseCbtHtmlFile(vaultHtml, safeId);
+        if (parsedVault?.questions?.length) vaultQs = parsedVault.questions;
+      }
+      setRamBundleCache(safeId, vaultQs, vaultHtml);
+      return {
+        questions: vaultQs,
+        rawHtml: vaultHtml,
+        useServerHtmlStream: false,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. Fast metadata+questions query (?skipHtml=1 or /static-store/test/:id.json)
   try {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 8000);
@@ -2037,7 +2167,7 @@ export async function loadTestFastForLaunch(
       const serverQs = Array.isArray(payload.questions)
         ? payload.questions.map((item, idx) => normalizeCbtQuestion(item, idx))
         : [];
-      if (payload.hasRawHtml || serverQs.length > 0) {
+      if (payload.hasRawHtml || areQuestionsPlayable(serverQs)) {
         return {
           questions: serverQs,
           rawHtml: '',
@@ -2046,48 +2176,50 @@ export async function loadTestFastForLaunch(
       }
     }
   } catch {
-    // Check RAM/Vault/Firestore below
+    // Check Vault/Firestore below
   }
 
-  // 2. Check RAM cache (0ms)
-  const cachedRam = ramTestBundleCache.get(safeId);
-  if (
-    cachedRam &&
-    (cachedRam.rawHtml.trim().length > 20 || areQuestionsPlayable(cachedRam.questions))
-  ) {
+  if (areQuestionsPlayable(vaultQs)) {
     return {
-      questions: cachedRam.questions,
-      rawHtml: cachedRam.rawHtml,
+      questions: vaultQs,
+      rawHtml: vaultHtml,
       useServerHtmlStream: false,
     };
-  }
-
-  // 3. Offline local-only check via IndexedDB Vault (<5ms)
-  try {
-    const [vaultQs, vaultHtml] = await Promise.all([
-      getVaultTestQuestions(safeId),
-      getVaultTestHtml(safeId),
-    ]);
-    if (vaultHtml.trim().length > 20 || vaultQs.length > 0) {
-      return {
-        questions: vaultQs,
-        rawHtml: vaultHtml,
-        useServerHtmlStream: false,
-      };
-    }
-  } catch {
-    // ignore
   }
 
   // 4. Live Cloud Firestore check (for newly Admin-added tests not in static CDN build)
   const cloudBundle = await loadTestBundleFromCloudFirestore(safeId);
   if (cloudBundle.rawHtml.trim().length > 20 || cloudBundle.questions.length > 0) {
-    setRamBundleCache(safeId, cloudBundle.questions, cloudBundle.rawHtml);
+    let resolvedCloudQs = cloudBundle.questions;
+    if (!areQuestionsPlayable(resolvedCloudQs) && cloudBundle.rawHtml.trim().length > 100) {
+      const parsedCloud = parseCbtHtmlFile(cloudBundle.rawHtml, cloudBundle.meta?.title || safeId);
+      if (parsedCloud?.questions?.length) resolvedCloudQs = parsedCloud.questions;
+    }
+    setRamBundleCache(safeId, resolvedCloudQs, cloudBundle.rawHtml);
     if (cloudBundle.meta) {
-      void saveTestToVault(cloudBundle.meta, cloudBundle.questions, cloudBundle.rawHtml).catch(() => {});
+      void saveTestToVault(cloudBundle.meta, resolvedCloudQs, cloudBundle.rawHtml).catch(() => {});
+    }
+    if (!isStaticStoreHost && (cloudBundle.rawHtml.trim().length > 200 || areQuestionsPlayable(resolvedCloudQs))) {
+      void (async () => {
+        try {
+          if (resolvedCloudQs.length > 0 && cloudBundle.meta) {
+            await uploadQuestionsInChunksToServer(
+              safeId,
+              cloudBundle.meta,
+              resolvedCloudQs,
+              cloudBundle.rawHtml.trim().length > 500
+            );
+          }
+          if (cloudBundle.rawHtml.trim().length > 200) {
+            await uploadHtmlInChunksToServer(safeId, cloudBundle.rawHtml);
+          }
+        } catch {
+          // ignore
+        }
+      })();
     }
     return {
-      questions: cloudBundle.questions,
+      questions: resolvedCloudQs,
       rawHtml: cloudBundle.rawHtml,
       useServerHtmlStream: false,
     };
